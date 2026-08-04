@@ -11,3 +11,4 @@ python-dotenv
 google-auth
 python-calamine
 pandas-gbq>=0.26.1
+google-cloud-bigquery-storage
