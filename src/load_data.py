@@ -69,23 +69,22 @@ def load_sensor_file(filepath: str) -> pd.DataFrame:
     raw = pd.read_excel(filepath, sheet_name=0, header=None, engine="calamine")
 
     # 1. satirda grup adi sadece bloğun ilk kolonunda var, digerleri NaN -> ffill ile doldur
+
     group_row = raw.iloc[0].ffill()
     data = raw.iloc[2:].reset_index(drop=True)  # veri 3. satirdan basliyor
 
     n_cols = raw.shape[1]
     utc_cols = list(range(0, n_cols, 3))
-    local_cols = list(range(1, n_cols, 3))
-
+    
     # Her blogun kendi Timestamp UTC / Local kolonlarini ayri ayri parse et
     utc_matrix = data.iloc[:, utc_cols].apply(pd.to_datetime)
-    local_matrix = data.iloc[:, local_cols].apply(pd.to_datetime)
-
+    
     # Satir bazinda "kanonik" timestamp: o satirda hangi blokta timestamp
     # doluysa onu kullan (hepsi ayni zamani temsil ettigi icin fark etmez).
     # bfill(axis=1) her satirda soldan saga ilk dolu degeri bulup NaN'lari
     # onunla doldurur; iloc[:, 0] o satirdaki ilk gecerli degeri verir.
     canonical_utc = utc_matrix.bfill(axis=1).iloc[:, 0]
-    canonical_local = local_matrix.bfill(axis=1).iloc[:, 0]
+    
 
     # Hicbir blokta timestamp yoksa (satir tamamen bos) kanonik deger de NaT
     # kalir -- bu satirin zaman referansi hic yok demektir, bu satirlari ayri
@@ -100,9 +99,10 @@ def load_sensor_file(filepath: str) -> pd.DataFrame:
 
     blocks = []
     for i, start in enumerate(range(0, n_cols, 3)):
-        utc_col, local_col, value_col = start, start + 1, start + 2
+        utc_col, value_col = start, start + 2
         metric_name = str(group_row[utc_col]).strip()
-        value_col_name = f"{metric_name} Value"
+        metric_name=metric_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
+        value_col_name = f"{metric_name}_value".lower()
 
         # Bu blogun kendi timestamp'i eksik olup kanonik timestamp'ten
         # dolduruldugu satir sayisini raporla
@@ -119,14 +119,14 @@ def load_sensor_file(filepath: str) -> pd.DataFrame:
         value = pd.to_numeric(data.iloc[:, value_col], errors="coerce")
 
         block = pd.DataFrame({
-            "Timestamp UTC": canonical_utc,
-            "Timestamp Local": canonical_local,
+            "timestamp_utc": canonical_utc,
+    
             value_col_name: value,
         })
         block = block[~fully_blank_rows]  # zaman referansi olmayan satirlari at
-        block = block.set_index(["Timestamp UTC", "Timestamp Local"])
+        block = block.set_index(["timestamp_utc"])
 
-        # Gercek duplicate kontrolu: ayni timestamp ayni blokta birden fazla
+        # Gercek duplicate kontrolu: ayni timestamp_utc ayni blokta birden fazla
         # kez gorunuyorsa bu bir veri kalitesi sorunu olabilir, sessizce
         # silmiyoruz -- nerede oldugunu gosterip duruyoruz.
 
@@ -183,7 +183,7 @@ def load_and_merge_all(raw_dir: str = RAW_DATA_DIR) -> pd.DataFrame:
 
         merged = merged.join(df, how="outer")
 
-    merged = merged.sort_index(level="Timestamp UTC")
+    merged = merged.sort_index(level="timestamp_utc")
     return merged
 
 
@@ -193,11 +193,14 @@ if __name__ == "__main__":
     df = load_and_merge_all()
 
     print(f"Sekil: {df.shape}")
-    print(f"Tarih araligi: {df.index.get_level_values('Timestamp UTC').min()} -> "
-          f"{df.index.get_level_values('Timestamp UTC').max()}")
+    print(f"Tarih araligi: {df.index.get_level_values('timestamp_utc').min()} -> "
+          f"{df.index.get_level_values('timestamp_utc').max()}")
     print(df.head())
 
-    df.to_csv(OUTPUT_FILE)
+    df_clean = df[df['speed_value'] > 0].dropna().reset_index(drop=False)
+
+
+    df_clean.to_csv(OUTPUT_FILE, index=False)
     print(f"Birlestirilmis veri kaydedildi: {OUTPUT_FILE}")
     print(
         "[not] Parquet yerine CSV'ye kaydedildi cunku pyarrow/fastparquet "
